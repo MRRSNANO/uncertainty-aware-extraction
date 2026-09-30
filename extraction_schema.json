@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/schemas/scientific-extraction-record.json",
+  "title": "Scientific extraction record",
+  "description": "One extracted study record. Shared structure across domains so that cross-domain comparison in Stage 6 is well defined. Domain-specific variables are listed under `variables`; the envelope, provenance and units fields are identical for both domains, which is what makes the cross-domain comparison legitimate.",
+  "type": "object",
+  "required": ["record_id", "domain", "source", "provenance", "variables", "ground_truth_source", "uncertainty_normalised"],
+  "additionalProperties": false,
+
+  "properties": {
+    "record_id": {
+      "type": "string",
+      "pattern": "^[A-Z]{2,4}-[0-9]{4,6}$",
+      "description": "Stable identifier, e.g. BDD-000123 or PVD-000045."
+    },
+
+    "domain": {
+      "type": "string",
+      "enum": ["BDD", "PEROVSKITE"]
+    },
+
+    "source": {
+      "type": "object",
+      "required": ["doi", "title", "year", "venue"],
+      "additionalProperties": false,
+      "properties": {
+        "doi": {"type": ["string", "null"]},
+        "title": {"type": "string", "minLength": 5},
+        "year": {"type": "integer", "minimum": 1990, "maximum": 2100},
+        "venue": {"type": "string"},
+        "open_access": {"type": "boolean"},
+        "retrieval_url": {"type": ["string", "null"]}
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "description": "Records where a value was found. This field makes Gap 3 (narrative prose is excluded by existing pipelines) a measurable variable rather than an assertion.",
+      "required": ["location", "page", "evidence_span"],
+      "additionalProperties": false,
+      "properties": {
+        "location": {
+          "type": "string",
+          "enum": ["table", "prose", "figure_caption", "abstract", "supplementary"],
+          "description": "Where the value physically appears in the paper."
+        },
+        "page": {"type": ["integer", "null"]},
+        "evidence_span": {
+          "type": "string",
+          "description": "Verbatim sentence or table cell containing the value. Required: without it the gold standard cannot be adjudicated."
+        },
+        "extraction_scope": {
+          "type": "string",
+          "enum": ["single_value", "range", "series", "derived"],
+          "description": "'range' and 'series' are the cases where a naive extractor silently collapses multiple values into one."
+        }
+      }
+    },
+
+    "variables": {
+      "type": "object",
+      "description": "Keys are variable identifiers from the domain schema. Each entry carries its own units and uncertainty, because uncertainty is a property of a value, not of a record.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["value", "as_reported"],
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "description": "Normalised value. Numeric for numeric variables, string label for categorical.",
+            "type": ["number", "string", "null"]
+          },
+          "as_reported": {
+            "type": "string",
+            "description": "Exactly as written in the source, before normalisation. Kept so that unit-conversion errors are auditable."
+          },
+          "unit_reported": {"type": ["string", "null"]},
+          "unit_normalised": {"type": ["string", "null"]},
+          "value_type": {
+            "type": "string",
+            "enum": ["numeric", "categorical", "relational", "ordinal"]
+          },
+          "uncertainty": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Composite uncertainty U_i. Null before Stage 2 has run."
+          },
+          "uncertainty_components": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "self_consistency": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "token_entropy": {"type": ["number", "null"], "minimum": 0},
+              "cross_model_agreement": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+            }
+          },
+          "uncertainty_components_normalised": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "description": "The same three signals after percentile normalisation onto [0, 1]. Written by the second pass; the composite `uncertainty` must be computed from THESE, not from the raw components, because CV is unbounded, entropy is in nats, and the epistemic term is bounded in [-1, 1]. Averaging raw values would let whichever signal has the widest range dominate.",
+            "properties": {
+              "self_consistency": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "token_entropy": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "epistemic": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+            }
+          },
+          "n_attempts": {"type": ["integer", "null"], "minimum": 1},
+          "n_valid_attempts": {"type": ["integer", "null"], "minimum": 0},
+          "outlier_exclusion_rate": {
+            "type": ["number", "null"],
+            "minimum": 0, "maximum": 1,
+            "description": "Fraction of the N attempts dropped by the 3x MAD rule. A high rate is itself a signal of source ambiguity and must be reported, not hidden."
+          },
+          "gold_value": {
+            "description": "Human-verified value. Null until Stage 3 annotation.",
+            "type": ["number", "string", "null"]
+          },
+          "extraction_correct": {
+            "type": ["boolean", "null"],
+            "description": "Set only for records inside the gold-standard subset."
+          },
+          "error_type": {
+            "type": ["string", "null"],
+            "enum": [
+              "none",
+              "wrong_value",
+              "wrong_unit",
+              "wrong_scale",
+              "collapsed_range",
+              "wrong_variable",
+              "hallucinated",
+              "missed",
+              "ambiguous_source"
+            ]
+          }
+        }
+      }
+    },
+
+    "domain_variable_set": {
+      "type": "string",
+      "enum": ["BDD_v1", "PEROVSKITE_v1"],
+      "description": "Which controlled vocabulary the `variables` keys must come from. Enforced by the validator, not by convention."
+    },
+
+    "ground_truth_source": {
+      "type": "string",
+      "enum": ["manual_annotation", "external_database", "none"],
+      "description": "Where the verified value comes from. BDD records use manual_annotation; perovskite records are matched against the Perovskite Database and use external_database. This field exists so the paper can report how much of its validation rests on our own annotation versus independent community curation -- the single most important credibility distinction in the study."
+    },
+
+    "uncertainty_normalised": {
+      "type": "boolean",
+      "description": "False until the second pass has percentile-normalised the signals. A corpus still holding raw composites is detectable rather than silently wrong, since the analysis must never run on them."
+    },
+
+    "database_match": {
+      "type": ["object", "null"],
+      "description": "Present only when ground_truth_source is external_database. Records how the extracted device was matched to a curated record. This matters because with an external gold standard the matching step, not the extraction, is where validation can silently fail: two devices in one paper with the same composition and different efficiencies will match ambiguously, and a silent wrong match would be scored as an extraction error.",
+      "additionalProperties": false,
+      "properties": {
+        "database": {"type": "string", "enum": ["perovskite_database"]},
+        "record_key": {"type": ["string", "null"]},
+        "match_method": {
+          "type": "string",
+          "enum": ["doi_and_composition", "doi_only", "composition_and_pce", "unmatched"]
+        },
+        "match_confidence": {"type": "string", "enum": ["exact", "probable", "ambiguous", "failed"]},
+        "candidate_count": {"type": ["integer", "null"], "minimum": 0},
+        "notes": {"type": ["string", "null"]}
+      }
+    },
+
+    "annotation": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "annotator_id": {"type": ["string", "null"]},
+        "second_annotator_id": {"type": ["string", "null"]},
+        "adjudicated": {"type": ["boolean", "null"]},
+        "adjudicator_id": {"type": ["string", "null"]},
+        "notes": {"type": ["string", "null"]}
+      }
+    }
+  },
+
+  "$defs": {
+    "bdd_vocabulary": {
+      "description": "Controlled vocabulary, Domain 1 (boron-doped diamond electrodes).",
+      "type": "object",
+      "properties": {
+        "boron_doping_level": {"type": "number", "unit_normalised": "ppm | cm^-3 | B/C ratio"},
+        "sp3_sp2_ratio": {"type": "number"},
+        "raman_fwhm": {"type": "number", "unit_normalised": "cm^-1"},
+        "film_thickness": {"type": "number", "unit_normalised": "um"},
+        "substrate": {"type": "string", "enum": ["Ti", "Nb", "Ta", "Si", "W", "Mo", "other"]},
+        "deposition_method": {"type": "string", "enum": ["HFCVD", "MPCVD", "MWCVD", "DC-CVD", "other"]},
+        "current_density": {"type": "number", "unit_normalised": "A/cm^2"},
+        "faradaic_efficiency": {"type": "number", "unit_normalised": "%"},
+        "service_life": {"type": "number", "unit_normalised": "h"},
+        "delamination": {"type": "string", "enum": ["none", "partial", "complete", "not_reported"]},
+        "electrolyte": {"type": "string"},
+        "cell_voltage": {"type": "number", "unit_normalised": "V"}
+      }
+    },
+    "perovskite_vocabulary": {
+      "description": "Controlled vocabulary, Domain 2 (halide perovskite solar cells). Names are aligned with the Perovskite Database (Jacobsson et al., Nature Energy 2022) so that every extracted value can be matched to an independently curated record. The `db_field` annotation names the corresponding database column; it is documentation for the matching step, not a JSON Schema keyword.",
+      "type": "object",
+      "properties": {
+        "absorber_composition": {"type": "string", "db_field": "composition", "hint": "e.g. MAPbI3, Cs0.05FA0.95PbI3"},
+        "bandgap": {"type": "number", "unit_normalised": "eV", "db_field": "bandgap"},
+        "pce": {"type": "number", "unit_normalised": "%", "db_field": "pce"},
+        "voc": {"type": "number", "unit_normalised": "V", "db_field": "voc"},
+        "jsc": {"type": "number", "unit_normalised": "mA/cm^2", "db_field": "jsc"},
+        "ff": {"type": "number", "unit_normalised": "%", "db_field": "ff"},
+        "device_architecture": {"type": "string", "enum": ["nip", "pin", "mesoporous", "other", "not_reported"], "db_field": "architecture"},
+        "etl": {"type": "string", "db_field": "etl", "hint": "electron transport layer"},
+        "htl": {"type": "string", "db_field": "htl", "hint": "hole transport layer"},
+        "deposition_method": {"type": "string", "db_field": "deposition_method"},
+        "annealing_temperature": {"type": "number", "unit_normalised": "degC", "db_field": "annealing_temperature"},
+        "active_area": {"type": "number", "unit_normalised": "cm^2", "db_field": "active_area"},
+        "stability_t80": {"type": "number", "unit_normalised": "h", "db_field": "stability_t80"},
+        "additives": {"type": "string", "db_field": "additives"}
+      }
+    }
+  }
+}
